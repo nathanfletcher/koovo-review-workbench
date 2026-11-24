@@ -1,0 +1,276 @@
+// GENERATED FILE - do not edit by hand.
+// Produced by scripts/generate-fixture.js from backend/src/domain/validation-engine.ts
+// so the UI tests assert against the real engine's output.
+import type { EvaluatedTransaction, ValidationSummary } from '../types/workbench';
+
+export const FIXTURE_SUMMARY: ValidationSummary = {
+  "total": 11,
+  "valid": 5,
+  "needsAttention": 4,
+  "excluded": 2,
+  "reviewBreakdown": {
+    "unreviewed": 11,
+    "reviewed": 0,
+    "needsCorrection": 0
+  }
+};
+
+export const FIXTURE_CLIENTS: string[] = ["C01","C02"];
+
+export const FIXTURE_RECORDS: EvaluatedTransaction[] = [
+  {
+    "id": "R001",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-101",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Westline Office",
+    "subtotal": "100.00",
+    "vat": "20.00",
+    "total": "120.00",
+    "transactionKey": "C01::Xero::X-101",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": true,
+    "validationStatus": "Valid",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R002",
+    "clientId": "C01",
+    "source": "Sage",
+    "sourceId": "S-201",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "ByteCloud",
+    "subtotal": "200.00",
+    "vat": "40.00",
+    "total": "240.00",
+    "transactionKey": "C01::Sage::S-201",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": true,
+    "validationStatus": "Valid",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R003",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-102",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Global Parts",
+    "subtotal": "300.00",
+    "vat": "60.00",
+    "total": "365.00",
+    "transactionKey": "C01::Xero::X-102",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": false,
+    "validationStatus": "Needs Attention",
+    "issues": [
+      {
+        "code": "TOTAL_MISMATCH",
+        "field": "total",
+        "message": "Total (£365.00) does not equal Subtotal (£300.00) plus VAT (£60.00) (expected £360.00)."
+      }
+    ],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R004",
+    "clientId": "C01",
+    "source": "Sage",
+    "sourceId": "S-202",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": null,
+    "subtotal": "120.00",
+    "vat": "24.00",
+    "total": "144.00",
+    "transactionKey": "C01::Sage::S-202",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": false,
+    "validationStatus": "Needs Attention",
+    "issues": [
+      {
+        "code": "MISSING_SUPPLIER",
+        "field": "supplier",
+        "message": "Posted record is missing a supplier name."
+      }
+    ],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R005",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-101",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Westline Office",
+    "subtotal": "100.00",
+    "vat": "20.00",
+    "total": "120.00",
+    "transactionKey": "C01::Xero::X-101",
+    "isDuplicate": true,
+    "duplicateOfRecordId": "R001",
+    "duplicateKind": "identical",
+    "processedForReporting": false,
+    "validationStatus": "Needs Attention",
+    "issues": [
+      {
+        "code": "DUPLICATE_TRANSACTION",
+        "field": "sourceId",
+        "message": "Repeated source transaction: C01 / Xero / X-101 was already ingested as R001. Identical copy retained for inspection and excluded from financial processing."
+      }
+    ],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R006",
+    "clientId": "C01",
+    "source": "Sage",
+    "sourceId": "S-203",
+    "type": "Bill",
+    "sourceStatus": "Draft",
+    "supplier": "City Couriers",
+    "subtotal": "50.00",
+    "vat": "10.00",
+    "total": "60.00",
+    "transactionKey": "C01::Sage::S-203",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": false,
+    "validationStatus": "Excluded",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R007",
+    "clientId": "C02",
+    "source": "Xero",
+    "sourceId": "X-101",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Westline Office",
+    "subtotal": "400.00",
+    "vat": "80.00",
+    "total": "480.00",
+    "transactionKey": "C02::Xero::X-101",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": true,
+    "validationStatus": "Valid",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R008",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-103",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Delta Supplies",
+    "subtotal": "90.00",
+    "vat": "18.00",
+    "total": "108.00",
+    "transactionKey": "C01::Xero::X-103",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": true,
+    "validationStatus": "Valid",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R009",
+    "clientId": "C01",
+    "source": "Sage",
+    "sourceId": "S-204",
+    "type": "Bill",
+    "sourceStatus": "Void",
+    "supplier": "Widgets Ltd",
+    "subtotal": "80.00",
+    "vat": "0.00",
+    "total": "80.00",
+    "transactionKey": "C01::Sage::S-204",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": false,
+    "validationStatus": "Excluded",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R010",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-104",
+    "type": "Credit",
+    "sourceStatus": "Posted",
+    "supplier": "Caldera",
+    "subtotal": "-100.00",
+    "vat": "-20.00",
+    "total": "-120.00",
+    "transactionKey": "C01::Xero::X-104",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": true,
+    "validationStatus": "Valid",
+    "issues": [],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  },
+  {
+    "id": "R011",
+    "clientId": "C01",
+    "source": "Xero",
+    "sourceId": "X-105",
+    "type": "Bill",
+    "sourceStatus": "Posted",
+    "supplier": "Alpha Inc",
+    "subtotal": "-30.00",
+    "vat": "-6.00",
+    "total": "-36.00",
+    "transactionKey": "C01::Xero::X-105",
+    "isDuplicate": false,
+    "duplicateOfRecordId": null,
+    "duplicateKind": null,
+    "processedForReporting": false,
+    "validationStatus": "Needs Attention",
+    "issues": [
+      {
+        "code": "NEGATIVE_BILL_AMOUNT",
+        "field": "total",
+        "message": "Posted Bill records must have non-negative amounts (Subtotal: -£30.00, VAT: -£6.00, Total: -£36.00)."
+      }
+    ],
+    "reviewStatus": "Unreviewed",
+    "auditHistory": []
+  }
+];
