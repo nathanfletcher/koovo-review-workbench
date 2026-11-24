@@ -12,6 +12,8 @@ WEB="http://localhost:${WEB_PORT}"
 api_pid=""
 web_pid=""
 
+port_in_use() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
 cleanup() {
   [[ -n "$web_pid" ]] && kill "$web_pid" 2>/dev/null || true
   [[ -n "$api_pid" ]] && kill "$api_pid" 2>/dev/null || true
@@ -21,6 +23,23 @@ trap cleanup EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
+
+wait_port_free() {
+  local port="$1" name="$2"
+  for _ in $(seq 1 40); do
+    port_in_use "$port" || return 0
+    sleep 0.25
+  done
+  fail "$name still listening on port $port: $(lsof -nP -iTCP:"$port" -sTCP:LISTEN | tail -n +2 | head -1)"
+}
+
+# Fail fast rather than fighting whatever is already running (a dev server, another demo).
+if port_in_use "$API_PORT"; then
+  fail "port $API_PORT already in use — stop the running API or pass API_PORT=<port>"
+fi
+if port_in_use "$WEB_PORT"; then
+  fail "port $WEB_PORT already in use — stop the running UI or pass WEB_PORT=<port>"
+fi
 
 wait_for() {
   local url="$1" name="$2"
@@ -75,6 +94,7 @@ api_pid=$!
 wait_for "$API/health" backend
 
 printf 'Starting frontend preview on :%s\n' "$WEB_PORT"
+export VITE_API_TARGET="http://localhost:${API_PORT}"
 (
   cd "$ROOT/frontend" &&
     exec ./node_modules/.bin/vite preview --port "$WEB_PORT" --strictPort
@@ -120,8 +140,8 @@ api_pid=""
 web_pid=""
 
 sleep 0.5
-if lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN >/dev/null 2>&1; then fail "port $API_PORT still in use"; fi
-if lsof -nP -iTCP:"$WEB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then fail "port $WEB_PORT still in use"; fi
+wait_port_free "$API_PORT" "backend"
+wait_port_free "$WEB_PORT" "frontend preview"
 pass "both processes shut down cleanly"
 
 printf '\nSmoke test complete: all checks passed.\n'

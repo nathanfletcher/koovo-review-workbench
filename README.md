@@ -6,7 +6,7 @@ an audit trail.
 
 - **Backend:** TypeScript + NestJS (`/backend`), in-memory repository, no database required
 - **Frontend:** React + TypeScript + Vite (`/frontend`)
-- **Tests:** 139 automated checks — Jest unit (86), Supertest integration (28), Vitest/RTL UI (25)
+- **Tests:** 162 automated checks — Jest unit (86), Supertest integration (51), Vitest/RTL UI (25), plus 22 live smoke assertions and 20 HTTP rule probes
 - **No paid services, no cloud, no Docker, no network access at test time**
 
 ---
@@ -37,6 +37,7 @@ browser only ever talks to one origin.
 | `npm run build` | `nest build` + `tsc --noEmit && vite build` |
 | `npm run verify` | typecheck + lint + all tests + build (the one command that gates delivery) |
 | `npm run smoke` | Boots the **real built** API and UI, asserts over real HTTP, then shuts both down |
+| `npm run probe` | Sends 20 rule probes to a running API (`POST /api/validate`) and checks each verdict |
 
 Individual projects:
 
@@ -126,10 +127,61 @@ Base URL `http://localhost:3001/api`. Every non-2xx response has one shape:
 | `GET` | `/transactions?clientId=&validationStatus=&reviewStatus=` | `{ summary, clients, records }`. `summary`/`clients` always describe the **full** dataset; `records` is filtered. Unknown params/enums → `400` |
 | `GET` | `/transactions/:id` | One record with `issues` + `auditHistory`; `404` if unknown |
 | `POST` | `/transactions/:id/review` | `{ action, note?, reviewerId, reviewerName? }` → `200 { record, auditEntry, summary }` |
+| `POST` | `/validate` | **Dry run** — `{ records: [...], context?: "isolated" \| "dataset" }` → validation results, **nothing persisted** |
 | `GET` | `/audit-logs` | `{ entries }`, newest first |
 
 Error codes: `INVALID_REQUEST` (400), `NOTE_REQUIRED` (400), `RECORD_NOT_FOUND` (404),
 `ALREADY_IN_STATE` (409), `EXCLUDED_RECORD` (422), `UNRESOLVED_VALIDATION_ISSUES` (422).
+
+### Probing the rules yourself (dry run)
+
+The brief hands over the dataset, so there is deliberately **no ingest UI**: a real ingest path needs
+idempotency keys, re-validation of neighbouring records and ingest audit events, and faking those in an
+in-memory demo would be dishonest. Instead the rules are exposed as a dry run, so anyone can throw a
+payload at them without polluting the review queue.
+
+```bash
+curl -s -X POST localhost:3001/api/validate -H 'Content-Type: application/json' -d '{
+  "records": [{
+    "clientId": "C99", "source": "Xero", "sourceId": "X-900",
+    "type": "Bill", "sourceStatus": "Posted", "supplier": "Test Supplier",
+    "subtotal": "300.00", "vat": "60.00", "total": "365.00"
+  }]
+}'
+# → 200, validationStatus "Needs Attention", issues [TOTAL_MISMATCH]
+```
+
+```bash
+npm run dev:backend   # terminal 1
+npm run probe         # terminal 2 — 20 probes covering every rule, exits non-zero on a regression
+```
+
+Contract details:
+
+- `records`: 1–50 candidate records. `id` is optional (`INPUT-1`, `INPUT-2`… assigned for you).
+- Amounts accept strings or numbers; numbers are stringified and then parsed by the same strict
+  grammar, so nothing reaches the engine as a float. `""` or `"-"` means *missing* (a finding, not an error).
+- `context: "isolated"` (default) evaluates the payload against itself; `context: "dataset"` puts the
+  current 11 records in front of it so duplicate detection sees real identities.
+- **A bad record is data, a bad request is an error**: a mismatched total returns `200` with a finding;
+  an unknown `source` returns `400 INVALID_REQUEST` naming the field.
+- `persisted: false` is in every response, and the dataset summary is identical before and after
+  (asserted by the probes and by `backend/test/integration/validate.e2e-spec.ts`).
+
+Where each rule is proven:
+
+| Rule | Unit test | HTTP proof |
+|---|---|---|
+| Exclusion (Draft/Void) | `validation-engine.spec.ts` → "excludes Draft and Void" | probe `draft, broken maths`, `void record` |
+| Composite identity, identical duplicate | `validation-engine.spec.ts` → R005 | probe `dataset: copy of R001` |
+| Cross-client same Source ID | `validation-engine.spec.ts` → R007 | probe `dataset: same ID, other client` |
+| Conflicting duplicate | `validation-engine.spec.ts` → "conflicting duplicate" | `POST /validate` with a changed total |
+| Bill sign rule | `validation-engine.spec.ts` → R011 | probe `negative bill` |
+| Credit may be negative | `validation-engine.spec.ts` → R010 | probe `negative credit` |
+| `Total = Subtotal + VAT` in pence | `money.spec.ts` + `validation-engine.spec.ts` → R003 | probes `total mismatch`, `one-penny drift` |
+| Missing supplier | `validation-engine.spec.ts` → R004 | probes `supplier '-'`, `supplier null` |
+| Unparseable/missing amount | `money.spec.ts` (grammar table) | probe `unparseable amount` |
+| Review guardrails (422/409) | `review-state.spec.ts` | `tests/integration/transactions.e2e-spec.ts` + `scripts/smoke-test.sh` |
 
 ---
 
@@ -140,10 +192,12 @@ Error codes: `INVALID_REQUEST` (400), `NOTE_REQUIRED` (400), `RECORD_NOT_FOUND` 
 | Unit (money) | `backend/test/unit/money.spec.ts` | 36 | Accepted/rejected amount grammar, negatives, missing values, safe-range overflow, formatting, float-drift cases |
 | Unit (rules) | `backend/test/unit/validation-engine.spec.ts` | 35 | All 11 records row-by-row, exact issue codes, cross-client vs duplicate, conflicting duplicates, excluded records and the dedupe index, multi-issue ordering, purity/idempotence, penny boundaries |
 | Unit (state) | `backend/test/unit/review-state.spec.ts` | 15 | Every allowed transition and every rejection branch, note bounds, precedence |
-| Integration | `backend/test/integration/transactions.e2e-spec.ts` | 28 | Real Nest app + pipes + filter + fixed clock: list shape/order/summary, each filter, summary invariance, 400/404/409/422 contracts, audit append-only, repository reset |
+| Integration (review workflow) | `backend/test/integration/transactions.e2e-spec.ts` | 28 | Real Nest app + pipes + filter + fixed clock: list shape/order/summary, each filter, summary invariance, 400/404/409/422 contracts, audit append-only, repository reset |
+| Integration (dry run) | `backend/test/integration/validate.e2e-spec.ts` | 23 | Every rule through `POST /validate`, both dedupe contexts, id defaulting, numeric coercion, payload limits, request-vs-record errors, proof that nothing persists |
 | UI | `frontend/src/__tests__/workbench.test.tsx` | 10 | Summary + 11 rows, client & status filters (asserting the API was called), drawer explanations, disabled guardrails, review flows with audit entries, loading/error/retry/empty states, Escape |
 | UI utils | `frontend/src/__tests__/format.test.ts` | 15 | GBP display formatting, timestamps |
 | End-to-end | `scripts/smoke-test.sh` | 22 assertions | Real built API + real Vite preview over real HTTP, then clean shutdown |
+| Rule probes | `scripts/probe.sh` | 20 assertions | Every rule over HTTP against a running API, including "nothing was persisted" |
 
 The UI test fixture is **generated from the real engine** (`scripts/generate-fixture.js`) so mocked
 tests cannot drift from the server's behaviour.
@@ -222,7 +276,7 @@ tests cannot drift from the server's behaviour.
 
 ```bash
 npm install && npm run setup   # once
-npm run verify                 # typecheck + lint + 139 tests + builds
+npm run verify                 # typecheck + lint + 162 tests + builds
 npm run dev                    # http://localhost:5173
 ```
 
@@ -243,6 +297,10 @@ npm run dev                    # http://localhost:5173
    -H 'Content-Type: application/json' -d '{"action":"MARK_REVIEWED","reviewerId":"acct-nathan"}'
    → 422`.
 9. `npm run smoke` — the same guarantees re-asserted against real processes, then clean shutdown.
+10. **`npm run probe`** (API already running) — 20 rule probes over HTTP for anyone who wants to test
+    their own numbers: send `subtotal 300.00 / vat 60.00 / total 365.00` and `TOTAL_MISMATCH` comes
+    back; send a Draft record and it is excluded; post a copy of R001 with `"context":"dataset"` and it
+    is flagged as a duplicate of R001 — and the dataset summary is unchanged afterwards.
 
 ### AI assistance
 
@@ -256,8 +314,8 @@ depends on a service I cannot explain line by line.
 ## Repository layout
 
 ```
-backend/   NestJS API — domain/, data/, repositories/, transactions/, common/, test/{unit,integration}
+backend/   NestJS API — domain/, data/, repositories/, transactions/, validation/, common/, test/{unit,integration}
 frontend/  React workbench — api/, hooks/, components/, utils/, test-utils/, __tests__/
-scripts/   smoke-test.sh (real-process E2E), generate-fixture.js (engine → UI fixture)
+scripts/   smoke-test.sh (real-process E2E), probe.sh (HTTP rule probes), generate-fixture.js (engine → UI fixture)
 PLAN.md    Audited execution specification (rules, contracts, gate commands, deviation log)
 ```

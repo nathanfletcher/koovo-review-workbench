@@ -18,6 +18,7 @@
     "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
     "build": "npm --prefix backend run build && npm --prefix frontend run build",
     "smoke": "bash scripts/smoke-test.sh",
+    "probe": "bash scripts/probe.sh",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "devDependencies": {

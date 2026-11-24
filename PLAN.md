@@ -77,8 +77,9 @@ koovo_exam/
 │   │   │   └── review-state.ts     # pure transition decision table
 │   │   ├── data/seed-records.ts    # verbatim R001–R011
 │   │   ├── repositories/workbench.repository.ts
-│   │   ├── common/{clock.ts,api-error.ts,http-exception.filter.ts}
+│   │   ├── common/{clock.ts,clock.module.ts,api-error.ts,api-exception.filter.ts}
 │   │   ├── transactions/{transactions.module.ts,controller,service,dto/}
+│   │   ├── validation/{validation.module.ts,validate.controller.ts,validate.service.ts,dto/}
 │   │   └── health/health.controller.ts
 │   └── test/
 │       ├── jest-e2e.json
@@ -252,6 +253,7 @@ Base `http://localhost:3001/api`. **Error envelope for every non-2xx:**
 3. **`GET /api/transactions/:id`** → `EvaluatedTransaction` | `404 RECORD_NOT_FOUND`.
 4. **`POST /api/transactions/:id/review`** — body `{ action, note?, reviewerId, reviewerName? }` → `200 { record, auditEntry, summary }`; guardrails per §4.5.
 5. **`GET /api/audit-logs`** → `{ entries: ReviewAuditEntry[] }` newest-first (global activity feed).
+6. **`POST /api/validate`** (v1.1.0) — dry run. Body `{ records: [1..50 candidate records], context?: 'isolated' | 'dataset' }`. Response `{ context, persisted: false, count, summary, records }`. Same validation engine, no writes: no dataset rows, no audit entries, no review state. `id` is optional (`INPUT-n` assigned). Amounts accept string or number (stringified before strict parsing). `context: 'dataset'` seeds the dedupe index from the current records so duplicates collide with R001–R011; default `'isolated'` evaluates the payload alone. A finding returns `200`; a malformed request returns `400 INVALID_REQUEST` naming the field.
 
 ---
 
@@ -322,3 +324,40 @@ Deviations (all deliberate, none weakening a rule):
 6. **Added `duplicateKind` and `reviewBreakdown`** to the contract (audit items A5 and the UI's review-progress card).
 7. **`GET /api/audit-logs` returns `{ entries }`** (enveloped, consistent with the list endpoint) rather than a bare array.
 8. **Repository is provided by `TransactionsModule`** and resolved in tests via `app.get(WorkbenchRepository)`; no global module needed.
+
+---
+
+## 9. v1.1.0 — dry-run validation endpoint (`POST /api/validate`)
+
+**Why.** The dataset is supplied, so there is no ingest UI. Without a dry run, "prove your rules handle my
+numbers" means editing a spec file or reseeding the app live — clunky in an interview and prone to leaving
+demo state behind. A dry-run endpoint gives the same capability with no persistence and no new domain
+semantics.
+
+**Design decisions**
+
+1. **Nothing persists.** The service calls the same pure `evaluateRecords()` and returns the results; the
+   repository is read-only here. `persisted: false` is part of the response so the contract is explicit,
+   and the integration tests assert the dataset summary and audit log are unchanged afterwards.
+2. **`context` is explicit.** `isolated` (default) evaluates the payload against itself — "what do these
+   rules say about this record?" `dataset` seeds the dedupe index with the current records, so a copy of
+   R001 is reported as a duplicate. One flag, no hidden state.
+3. **No ingest semantics.** There is no delete, no re-validation of neighbours, no ingest audit entry,
+   because none of those are implemented — the endpoint cannot pretend otherwise.
+4. **Friendlier than the review API.** `id` is optional (`INPUT-n` assigned), amounts accept numbers
+   (stringified, then parsed by the same strict grammar so no float reaches the engine), and `supplier`
+   accepts `null`/`"-"`/omitted (missing supplier is a finding, not a request error).
+5. **Bounded.** 1–50 records per call; unknown fields and unknown enum values are rejected by the existing
+   `ValidationPipe`, so a typo'd field cannot silently become "missing".
+6. **Bad record ≠ bad request.** A mismatched total is `200` + a finding; an unknown `source` is
+   `400 INVALID_REQUEST` naming the field. This distinction is the point of the endpoint.
+
+**Gate for v1.1.0**
+
+| Command | Result |
+|---|---|
+| `npm --prefix backend run typecheck && lint` | clean |
+| `npm --prefix backend run test:e2e` | 2 suites, **51** tests (28 review + 23 dry run) |
+| `npm run probe` (live API) | **20/20** probes, dataset unchanged |
+| `npm run verify` | typecheck + lint + **162** tests + both builds, exit 0 |
+| `npm run smoke` | 22/22 assertions |

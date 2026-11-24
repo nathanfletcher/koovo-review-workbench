@@ -119,6 +119,15 @@ export interface AuditLogResponse {
   entries: ReviewAuditEntry[];
 }
 
+/** Dry-run result. `persisted` is always false — nothing is written. */
+export interface ValidateResponse {
+  context: 'isolated' | 'dataset';
+  persisted: false;
+  count: number;
+  summary: ValidationSummary;
+  records: EvaluatedTransaction[];
+}
+
 export interface HealthResponse {
   status: 'ok';
   timestamp: string;
