@@ -6,11 +6,45 @@ import type {
   ValidationSummary,
 } from '../types/workbench';
 import { FIXTURE_CLIENTS, FIXTURE_RECORDS } from './records.fixture';
+import { SANDBOX_FIXTURES } from './sandbox.fixture';
 
 const FIXED_NOW = '2026-11-24T10:15:30.000Z';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function stableKey(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableKey).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${stableKey(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** Mirrors the DTO's required fields so a malformed payload gets a realistic 400. */
+function missingRequiredField(records: unknown[]): string | null {
+  const required = ['clientId', 'source', 'sourceId', 'type', 'sourceStatus', 'subtotal', 'vat', 'total'] as const;
+
+  for (const [index, candidate] of records.entries()) {
+    if (!candidate || typeof candidate !== 'object') {
+      return `records.${index}: each record must be an object`;
+    }
+
+    for (const field of required) {
+      const value = (candidate as Record<string, unknown>)[field];
+
+      if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+        return `records.${index}.${field}: ${field} is required`;
+      }
+    }
+  }
+
+  return null;
 }
 
 function summarize(records: EvaluatedTransaction[]): ValidationSummary {
@@ -47,6 +81,7 @@ export interface MockWorkbenchApi {
   /** Every request the UI made, in order — used to prove filters hit the API. */
   calls: string[];
   reviewBodies: Array<Record<string, unknown>>;
+  validateBodies: Array<{ records?: unknown; context?: string }>;
   records: () => EvaluatedTransaction[];
   failNextList: () => void;
   restore: () => void;
@@ -61,6 +96,7 @@ export function installMockApi(): MockWorkbenchApi {
   const records: EvaluatedTransaction[] = clone(FIXTURE_RECORDS);
   const calls: string[] = [];
   const reviewBodies: Array<Record<string, unknown>> = [];
+  const validateBodies: Array<{ records?: unknown; context?: string }> = [];
   let auditSequence = 0;
   let failListOnce = false;
 
@@ -84,6 +120,40 @@ export function installMockApi(): MockWorkbenchApi {
     const url = urlOf(input);
     const method = init?.method ?? 'GET';
     calls.push(`${method} ${url}`);
+
+    if (method === 'POST' && url === '/api/validate') {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        records?: unknown;
+        context?: string;
+      };
+      validateBodies.push(body);
+
+      if (!Array.isArray(body.records) || body.records.length === 0) {
+        return errorResponse(400, 'INVALID_REQUEST', 'records: records must contain at least one record');
+      }
+
+      const missing = missingRequiredField(body.records);
+
+      if (missing) {
+        return errorResponse(400, 'INVALID_REQUEST', missing);
+      }
+
+      // Answers come from the engine-generated fixture, never from rules re-implemented
+      // in the test double. Add a preset and regenerate rather than faking a verdict.
+      const fixture = SANDBOX_FIXTURES.find(
+        (candidate) => candidate.key === stableKey({ records: body.records, context: body.context }),
+      );
+
+      if (!fixture) {
+        return errorResponse(
+          400,
+          'MOCK_UNMATCHED',
+          'The test double has no engine-computed answer for this payload.',
+        );
+      }
+
+      return jsonResponse(clone(fixture.response));
+    }
 
     if (method === 'POST' && /^\/api\/transactions\/[^/]+\/review$/.test(url)) {
       const recordId = decodeURIComponent(url.split('/')[3] ?? '');
@@ -208,6 +278,7 @@ export function installMockApi(): MockWorkbenchApi {
   return {
     calls,
     reviewBodies,
+    validateBodies,
     records: () => clone(records),
     failNextList: () => {
       failListOnce = true;

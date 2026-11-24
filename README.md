@@ -6,7 +6,7 @@ an audit trail.
 
 - **Backend:** TypeScript + NestJS (`/backend`), in-memory repository, no database required
 - **Frontend:** React + TypeScript + Vite (`/frontend`)
-- **Tests:** 162 automated checks — Jest unit (86), Supertest integration (51), Vitest/RTL UI (25), plus 22 live smoke assertions and 20 HTTP rule probes
+- **Tests:** 175 automated checks on this branch — Jest unit (86), Supertest integration (51), Vitest/RTL UI (38), plus 22 live smoke assertions and 20 HTTP rule probes
 - **No paid services, no cloud, no Docker, no network access at test time**
 
 ---
@@ -183,6 +183,27 @@ Where each rule is proven:
 | Unparseable/missing amount | `money.spec.ts` (grammar table) | probe `unparseable amount` |
 | Review guardrails (422/409) | `review-state.spec.ts` | `tests/integration/transactions.e2e-spec.ts` + `scripts/smoke-test.sh` |
 
+### In-app sandbox panel (branch `feature/validation-sandbox`)
+
+`main` (v1.1.0) exposes the dry run over HTTP only. This branch adds a collapsed panel under the review
+table that drives the same endpoint, for reviewers who would rather click than type curl:
+
+- **One-click presets** for each rule: bad total, penny drift, missing supplier, negative bill, negative
+  credit, Draft exclusion, and a duplicate of R001 checked against the live dataset.
+- **Editable payload** (JSON, 1–50 records) with an instant shape check client-side and the server's
+  `400` message surfaced verbatim.
+- **Context switch** between isolated and dataset duplicate detection.
+- The panel is visually separate from the review queue (dashed border, closed by default), states
+  `persisted: false · nothing was saved`, and can only reach `POST /api/validate` — the review actions
+  live in the drawer and are untouched.
+
+Run it exactly as a reviewer would:
+
+```bash
+npm run build
+./scripts/demo.sh          # real API + real vite preview; Ctrl+C stops both
+```
+
 ---
 
 ## Testing strategy
@@ -195,6 +216,7 @@ Where each rule is proven:
 | Integration (review workflow) | `backend/test/integration/transactions.e2e-spec.ts` | 28 | Real Nest app + pipes + filter + fixed clock: list shape/order/summary, each filter, summary invariance, 400/404/409/422 contracts, audit append-only, repository reset |
 | Integration (dry run) | `backend/test/integration/validate.e2e-spec.ts` | 23 | Every rule through `POST /validate`, both dedupe contexts, id defaulting, numeric coercion, payload limits, request-vs-record errors, proof that nothing persists |
 | UI | `frontend/src/__tests__/workbench.test.tsx` | 10 | Summary + 11 rows, client & status filters (asserting the API was called), drawer explanations, disabled guardrails, review flows with audit entries, loading/error/retry/empty states, Escape |
+| UI (sandbox) | `frontend/src/__tests__/sandbox.test.tsx` | 13 | Every preset verdict, context switching, invalid JSON, server `400` surfaced, and proof that the panel only calls `POST /api/validate` |
 | UI utils | `frontend/src/__tests__/format.test.ts` | 15 | GBP display formatting, timestamps |
 | End-to-end | `scripts/smoke-test.sh` | 22 assertions | Real built API + real Vite preview over real HTTP, then clean shutdown |
 | Rule probes | `scripts/probe.sh` | 20 assertions | Every rule over HTTP against a running API, including "nothing was persisted" |

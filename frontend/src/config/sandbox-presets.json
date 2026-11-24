@@ -1,0 +1,170 @@
+[
+  {
+    "id": "clean",
+    "label": "Clean record",
+    "hint": "Everything adds up — should be Valid",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "Test Supplier",
+          "subtotal": "10.00",
+          "vat": "2.00",
+          "total": "12.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "bad-total",
+    "label": "Bad total",
+    "hint": "300.00 + 60.00 != 365.00 — TOTAL_MISMATCH",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "Test Supplier",
+          "subtotal": "300.00",
+          "vat": "60.00",
+          "total": "365.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "penny-out",
+    "label": "One penny out",
+    "hint": "100.00 + 20.00 != 120.01 — penny-level drift is caught",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "Test Supplier",
+          "subtotal": "100.00",
+          "vat": "20.00",
+          "total": "120.01"
+        }
+      ]
+    }
+  },
+  {
+    "id": "missing-supplier",
+    "label": "Missing supplier",
+    "hint": "Supplier \"-\" is treated as missing on a posted record",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "-",
+          "subtotal": "10.00",
+          "vat": "2.00",
+          "total": "12.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "negative-bill",
+    "label": "Negative bill",
+    "hint": "Posted Bill with negative amounts — NEGATIVE_BILL_AMOUNT",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "Test Supplier",
+          "subtotal": "-30.00",
+          "vat": "-6.00",
+          "total": "-36.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "negative-credit",
+    "label": "Negative credit",
+    "hint": "The same numbers as a Credit are legitimate — Valid",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-901",
+          "type": "Credit",
+          "sourceStatus": "Posted",
+          "supplier": "Caldera",
+          "subtotal": "-100.00",
+          "vat": "-20.00",
+          "total": "-120.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "draft",
+    "label": "Draft record",
+    "hint": "Draft is excluded even with broken maths — no validation applied",
+    "context": "isolated",
+    "request": {
+      "records": [
+        {
+          "clientId": "C99",
+          "source": "Xero",
+          "sourceId": "X-900",
+          "type": "Bill",
+          "sourceStatus": "Draft",
+          "supplier": "-",
+          "subtotal": "300.00",
+          "vat": "60.00",
+          "total": "999.00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "duplicate-of-r001",
+    "label": "Duplicate of R001",
+    "hint": "Checked against the live dataset — same client, source and source ID",
+    "context": "dataset",
+    "request": {
+      "records": [
+        {
+          "clientId": "C01",
+          "source": "Xero",
+          "sourceId": "X-101",
+          "type": "Bill",
+          "sourceStatus": "Posted",
+          "supplier": "Westline Office",
+          "subtotal": "100.00",
+          "vat": "20.00",
+          "total": "120.00"
+        }
+      ]
+    }
+  }
+]

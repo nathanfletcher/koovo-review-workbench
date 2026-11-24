@@ -3,6 +3,7 @@ import { FilterBar } from './components/FilterBar';
 import { RecordDetailDrawer } from './components/RecordDetailDrawer';
 import { RecordsTable } from './components/RecordsTable';
 import { SummaryCards } from './components/SummaryCards';
+import { ValidationSandbox } from './components/ValidationSandbox';
 import { useWorkbench } from './hooks/useWorkbench';
 
 export default function App(): ReactElement {
@@ -58,6 +59,8 @@ export default function App(): ReactElement {
           error={workbench.reviewError}
         />
       )}
+
+      <ValidationSandbox />
     </div>
   );
 }

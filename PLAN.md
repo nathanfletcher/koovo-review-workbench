@@ -361,3 +361,37 @@ semantics.
 | `npm run probe` (live API) | **20/20** probes, dataset unchanged |
 | `npm run verify` | typecheck + lint + **162** tests + both builds, exit 0 |
 | `npm run smoke` | 22/22 assertions |
+
+---
+
+## 10. Branch `feature/validation-sandbox` — in-app sandbox panel
+
+Not merged, deliberately: the submission surface stays the smaller, HTTP-probeable version on `main`.
+This branch demonstrates the same capability with a mouse, and is kept for the live walkthrough.
+
+**Design**
+
+1. **One endpoint, no new domain semantics.** The panel only calls `POST /api/validate`. It never calls
+   the review endpoints, so it cannot change validation status, review state, the summary or the audit
+   log. A UI test asserts that no mutating request is ever made.
+2. **Visually quarantined.** A dashed container below the table, collapsed by default (native
+   `<details>`), with three separate statements that nothing is saved. Nobody can mistake it for the
+   review queue.
+3. **Presets are data, not logic.** `frontend/src/config/sandbox-presets.json` holds the payloads; the
+   UI renders them as one-click chips and `scripts/generate-fixture.js` feeds the *same* objects to the
+   real engine to emit expected answers for the tests. No rule is re-implemented in the test double —
+   an unmatched payload returns a loud `400 MOCK_UNMATCHED` instead of a fabricated verdict.
+4. **Client-side parsing is shape-only.** Invalid JSON and a missing `records` array get an instant
+   message; everything else (enums, amount grammar, limits) is the server's `400`, surfaced verbatim.
+5. **Both contexts are fixture-covered** (isolated and dataset per preset), so the context switch can be
+   exercised without inventing answers.
+6. **`scripts/demo.sh`** runs the built app exactly as a reviewer would (real API + real `vite preview`,
+   optional `API_PORT`/`WEB_PORT`, `VITE_API_TARGET` wired automatically).
+
+**Gate for this branch**
+
+| Command | Result |
+|---|---|
+| `npm run verify` | typecheck + lint + **175** tests (86 unit, 51 integration, 38 UI) + builds, exit 0 |
+| `npm run probe` / `npm run smoke` | unchanged from v1.1.0 (backend untouched) |
+| Browser check | preset click → real `POST /api/validate` → `TOTAL_MISMATCH` rendered; summary stayed 11 / 5 / 4 / 2, 11 unreviewed, no audit entry |

@@ -91,6 +91,34 @@ export interface ApiErrorBody {
   message: string;
 }
 
+export type ValidationContext = 'isolated' | 'dataset';
+
+export interface CandidateRecord {
+  id?: string;
+  clientId: string;
+  source: AccountingSource;
+  sourceId: string;
+  type: TransactionType;
+  sourceStatus: SourceStatus;
+  supplier?: string | null;
+  subtotal: string | number;
+  vat: string | number;
+  total: string | number;
+}
+
+export interface ValidateRequest {
+  records: CandidateRecord[];
+  context?: ValidationContext;
+}
+
+export interface ValidateResponse {
+  context: ValidationContext;
+  persisted: false;
+  count: number;
+  summary: ValidationSummary;
+  records: EvaluatedTransaction[];
+}
+
 export interface TransactionFilters {
   clientId?: string;
   validationStatus?: ValidationStatus;

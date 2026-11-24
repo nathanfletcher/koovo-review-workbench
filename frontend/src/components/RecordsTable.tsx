@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
-import type { EvaluatedTransaction, ReviewStatus, ValidationStatus } from '../types/workbench';
+import type { EvaluatedTransaction } from '../types/workbench';
+import { REVIEW_TONE, VALIDATION_TONE } from '../utils/badges';
 import { formatGbp } from '../utils/format';
 
 interface RecordsTableProps {
@@ -8,18 +9,6 @@ interface RecordsTableProps {
   onSelect: (record: EvaluatedTransaction) => void;
   onResetFilters: () => void;
 }
-
-const VALIDATION_TONE: Record<ValidationStatus, string> = {
-  Valid: 'valid',
-  'Needs Attention': 'attention',
-  Excluded: 'excluded',
-};
-
-const REVIEW_TONE: Record<ReviewStatus, string> = {
-  Unreviewed: 'neutral',
-  Reviewed: 'reviewed',
-  'Needs Correction': 'correction',
-};
 
 export function RecordsTable({
   records,

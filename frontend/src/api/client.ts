@@ -5,6 +5,8 @@ import type {
   ReviewRequest,
   TransactionFilters,
   TransactionListResponse,
+  ValidateRequest,
+  ValidateResponse,
 } from '../types/workbench';
 
 const BASE_PATH = '/api';
@@ -96,5 +98,13 @@ export const api = {
       `/transactions/${encodeURIComponent(recordId)}/review`,
       { method: 'POST', body: JSON.stringify(request) },
     );
+  },
+
+  /** Dry run: validates a payload without persisting anything. */
+  validateRecords(request: ValidateRequest): Promise<ValidateResponse> {
+    return requestJson<ValidateResponse>('/validate', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
   },
 };
