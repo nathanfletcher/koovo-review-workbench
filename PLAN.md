@@ -86,7 +86,7 @@ koovo_exam/
 │       ├── unit/{money.spec.ts,validation-engine.spec.ts,review-state.spec.ts}
 │       └── integration/transactions.e2e-spec.ts
 └── frontend/
-    ├── package.json  tsconfig.json  tsconfig.node.json  vite.config.ts  index.html  eslint.config.mjs
+    ├── package.json  tsconfig.json  vite.config.ts  index.html  eslint.config.mjs
     └── src/
         ├── main.tsx  App.tsx  styles.css
         ├── api/client.ts            # typed fetch wrapper + ApiError
@@ -297,3 +297,28 @@ Tests (`src/__tests__/workbench.test.tsx` + `format-gbp.test.ts`, mocked fetch):
 4. Write `README.md` (quickstart, architecture, rule matrix, API table, tests, decisions/trade-offs, production path, 5-minute demo script, AI-assistance note) and commit.
 5. `git status` shows a clean tree — only source, tests, docs.
 **Gate 4:** `npm run verify` (typecheck + lint + all tests + build) → then live smoke above → `git status --porcelain` empty.
+
+---
+
+## 8. Execution log (gates + deviations from this plan)
+
+Gates were run in order; each one passed before the next phase started.
+
+| Gate | Command | Result |
+|---|---|---|
+| 1 | `typecheck && lint && test` (backend) | 3 suites, **86** tests, 0 lint/type errors |
+| 2 | `test:e2e && build` (backend) | 1 suite, **28** tests, `dist/` emitted |
+| 3 | `lint && typecheck && test:run && build` (frontend) | 2 files, **25** tests, 238 kB bundle (74 kB gzip) |
+| 4 | `npm run verify` at root | typecheck + lint + **139** tests + both builds, exit 0 |
+| 4 | `scripts/smoke-test.sh` (real API + real Vite preview, real HTTP) | **22** assertions passed, both processes shut down, ports released |
+
+Deviations (all deliberate, none weakening a rule):
+
+1. **`POST /transactions/:id/review` returns `200`, not Nest's default `201`** — `@HttpCode(HttpStatus.OK)`; a state transition is not resource creation.
+2. **No `tsconfig.node.json`** — `vite.config.ts` is type-checked by the single frontend tsconfig; the second config added a second `tsc` invocation without a second benefit.
+3. **`money.ts` accepts up to 15 integer digits** (not 12) so the `OUT_OF_RANGE` branch is reachable and tested rather than dead code.
+4. **Added `scripts/generate-fixture.js`** — the UI test fixture is generated from the compiled engine, removing the risk that mocked UI tests drift from server behaviour.
+5. **Added `scripts/smoke-test.sh`** — Phase 4's manual curl list, automated so the gate is repeatable (`npm run smoke`).
+6. **Added `duplicateKind` and `reviewBreakdown`** to the contract (audit items A5 and the UI's review-progress card).
+7. **`GET /api/audit-logs` returns `{ entries }`** (enveloped, consistent with the list endpoint) rather than a bare array.
+8. **Repository is provided by `TransactionsModule`** and resolved in tests via `app.get(WorkbenchRepository)`; no global module needed.
