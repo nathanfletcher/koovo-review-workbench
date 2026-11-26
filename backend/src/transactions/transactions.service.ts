@@ -14,12 +14,14 @@ import type {
   AuditLogResponse,
   EvaluatedTransaction,
   ReviewActionResponse,
+  ReviewAuditEntry,
   TransactionListResponse,
 } from '../domain/models';
 import type { ReviewTransitionFailure } from '../domain/review-state';
 import { planReviewTransition } from '../domain/review-state';
 import { listClients, summarize } from '../domain/validation-engine';
-import { WorkbenchRepository } from '../repositories/workbench.repository';
+import { WorkbenchRepository, StaleReviewWriteError } from '../repositories/workbench.repository';
+import type { ReviewMutation } from '../repositories/workbench.repository';
 import { ReviewActionDto } from './dto/review-action.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
 
@@ -76,24 +78,47 @@ export class TransactionsService {
       throw this.toHttpException(decision);
     }
 
+    const reviewerId = dto.reviewerId.trim();
+
     const mutation = {
       recordId,
       action: dto.action,
       previousReviewStatus: record.reviewStatus,
       newReviewStatus: decision.targetStatus,
       note: decision.note,
-      reviewerId: dto.reviewerId.trim(),
-      reviewerName: (dto.reviewerName ?? dto.reviewerId).trim(),
+      reviewerId,
+      // A blank display name must not produce a blank audit entry.
+      reviewerName: dto.reviewerName?.trim() || reviewerId,
       timestamp: this.clock.now().toISOString(),
     };
 
-    const { record: updated, auditEntry } = this.repository.applyReview(mutation);
+    const { record: updated, auditEntry } = this.applyReview(mutation);
 
     return {
       record: updated,
       auditEntry,
       summary: summarize(this.repository.findAll()),
     };
+  }
+
+  /**
+   * The repository refuses a write planned against a stale snapshot. In
+   * PostgreSQL that is a conditional UPDATE ... WHERE review_status = $previous
+   * returning zero rows (see WorkbenchRepository.applyReview); here it can only
+   * happen if the service is ever made concurrent, but it is mapped to the same
+   * 409 so callers see one contract either way.
+   */
+  private applyReview(mutation: ReviewMutation): { record: EvaluatedTransaction; auditEntry: ReviewAuditEntry } {
+    try {
+      return this.repository.applyReview(mutation);
+    } catch (error) {
+      if (error instanceof StaleReviewWriteError) {
+        throw new ConflictException(
+          apiError(409, ErrorCode.CONCURRENT_REVIEW_CONFLICT, error.message),
+        );
+      }
+      throw error;
+    }
   }
 
   auditLog(): AuditLogResponse {

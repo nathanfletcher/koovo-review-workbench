@@ -164,6 +164,25 @@ describe('Review workbench', () => {
     expect(screen.queryByTestId('load-error')).not.toBeInTheDocument();
   });
 
+  it('surfaces a server guardrail error in the drawer without losing the record', async () => {
+    const user = await renderApp();
+    const dialog = await openRecord(user, 'R001');
+
+    mock.failNextReview();
+
+    await user.click(within(dialog).getByTestId('mark-reviewed'));
+
+    const alert = await within(dialog).findByTestId('review-error');
+    expect(alert).toHaveTextContent(
+      'R001 has 1 unresolved validation issue (TOTAL_MISMATCH) and cannot be marked as Reviewed.',
+    );
+    // The action failed: nothing was changed locally and the control is still usable.
+    expect(screen.getByTestId('summary-reviewed')).toHaveTextContent('0');
+    expect(within(dialog).getByTestId('audit-empty')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('mark-reviewed')).toBeEnabled();
+    expect(mock.records().find((record) => record.id === 'R001')?.reviewStatus).toBe('Unreviewed');
+  });
+
   it('shows an empty state with a way out when filters match nothing', async () => {
     const user = await renderApp();
 

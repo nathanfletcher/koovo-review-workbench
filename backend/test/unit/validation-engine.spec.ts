@@ -9,6 +9,7 @@ import {
   buildTransactionKey,
   evaluateRecords,
   listClients,
+  normalizeIdentifier,
   normalizeSupplier,
   summarize,
 } from '../../src/domain/validation-engine';
@@ -223,6 +224,83 @@ describe('evaluateRecords — assessment dataset', () => {
     expect(records.get('R009')?.validationStatus).toBe('Excluded');
     expect(records.get('R006')?.issues).toEqual([]);
     expect(records.get('R009')?.issues).toEqual([]);
+  });
+});
+
+describe('evaluateRecords — identity normalisation', () => {
+  it('trims client and source ids in the key and in the evaluated record', () => {
+    const [record] = evaluateRecords([
+      makeRecord({ id: 'R500', clientId: '  C01  ', sourceId: '\tX-500\n' }),
+    ]);
+
+    expect(record?.clientId).toBe('C01');
+    expect(record?.sourceId).toBe('X-500');
+    expect(record?.transactionKey).toBe('C01::Xero::X-500');
+  });
+
+  it('treats whitespace-padded ids as one identity, not two', () => {
+    const [first, second] = evaluateRecords([
+      makeRecord({ id: 'R501', clientId: 'C01', sourceId: 'X-501' }),
+      makeRecord({ id: 'R502', clientId: ' C01 ', sourceId: 'X-501 ' }),
+    ]);
+
+    expect(first?.isDuplicate).toBe(false);
+    expect(second).toMatchObject({
+      isDuplicate: true,
+      duplicateKind: 'identical',
+      duplicateOfRecordId: 'R501',
+      validationStatus: 'Needs Attention',
+    });
+    expect(second?.validationStatus).toBe('Needs Attention');
+    expect(second?.issues.map((issue) => issue.code)).toEqual(['DUPLICATE_TRANSACTION']);
+  });
+
+  it('still separates the same Source ID under a different client after trimming', () => {
+    const [, second] = evaluateRecords([
+      makeRecord({ id: 'R503', clientId: 'C01', sourceId: 'X-503' }),
+      makeRecord({ id: 'R504', clientId: ' C02 ', sourceId: 'X-503' }),
+    ]);
+
+    expect(second?.isDuplicate).toBe(false);
+    expect(second?.validationStatus).toBe('Valid');
+    expect(second?.transactionKey).toBe('C02::Xero::X-503');
+  });
+
+  it('compares duplicate values as money, so formatting alone is not a conflict', () => {
+    const [, second] = evaluateRecords([
+      makeRecord({
+        id: 'R505',
+        sourceId: 'X-505',
+        subtotal: '100.00',
+        vat: '20.00',
+        total: '120.00',
+      }),
+      makeRecord({
+        id: 'R506',
+        sourceId: 'X-505',
+        subtotal: '100.0',
+        vat: '20',
+        total: '120',
+      }),
+    ]);
+
+    expect(second?.duplicateKind).toBe('identical');
+  });
+
+  it('still calls a genuine value difference conflicting', () => {
+    const [, second] = evaluateRecords([
+      makeRecord({ id: 'R507', sourceId: 'X-507', total: '120.00' }),
+      makeRecord({ id: 'R508', sourceId: 'X-507', total: '120.01' }),
+    ]);
+
+    expect(second?.duplicateKind).toBe('conflicting');
+  });
+
+  it('trims identifiers when building a key directly', () => {
+    expect(buildTransactionKey({ clientId: ' C02 ', source: 'Sage', sourceId: ' S-1 ' })).toBe(
+      'C02::Sage::S-1',
+    );
+    expect(normalizeIdentifier('  C01\t')).toBe('C01');
   });
 });
 

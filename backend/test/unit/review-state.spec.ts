@@ -65,6 +65,81 @@ describe('planReviewTransition — allowed paths', () => {
   });
 });
 
+describe('planReviewTransition — note semantics', () => {
+  it('stores an absent or blank note as null when marking Reviewed', () => {
+    for (const note of [undefined, null, '', '   ']) {
+      expect(attempt('R001', 'MARK_REVIEWED', note)).toEqual({
+        ok: true,
+        targetStatus: 'Reviewed',
+        note: null,
+      });
+    }
+  });
+
+  it('keeps a trimmed note supplied with Reviewed', () => {
+    const result = attempt('R001', 'MARK_REVIEWED', '  Matches the supplier invoice  ');
+    expect(result).toEqual({ ok: true, targetStatus: 'Reviewed', note: 'Matches the supplier invoice' });
+  });
+
+  it('allows a Reviewed record to be reopened for correction', () => {
+    expect(attempt('R001', 'MARK_NEEDS_CORRECTION', 'Invoice re-checked', 'Reviewed')).toEqual({
+      ok: true,
+      targetStatus: 'Needs Correction',
+      note: 'Invoice re-checked',
+    });
+  });
+});
+
+describe('planReviewTransition — guardrail precedence', () => {
+  it('checks request completeness before exclusion (400 before 422)', () => {
+    const result = attempt('R006', 'MARK_NEEDS_CORRECTION');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('NOTE_REQUIRED');
+      expect(result.httpStatus).toBe(400);
+    }
+  });
+
+  it('checks exclusion before unresolved issues (EXCLUDED_RECORD 422 wins)', () => {
+    // The engine never attaches issues to an Excluded record; this synthetic
+    // record pins the ordering so a future change cannot let a 422
+    // UNRESOLVED_VALIDATION_ISSUES message leak out for a Draft/Void row.
+    const excludedWithIssues: EvaluatedTransaction = {
+      ...record('R006'),
+      issues: [{ code: 'TOTAL_MISMATCH', field: 'total', message: 'synthetic' }],
+    };
+
+    const result = planReviewTransition(excludedWithIssues, 'MARK_REVIEWED');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('EXCLUDED_RECORD');
+      expect(result.httpStatus).toBe(422);
+    }
+  });
+
+  it('checks unresolved issues before a repeated transition (422 before 409)', () => {
+    const result = attempt('R003', 'MARK_REVIEWED', null, 'Needs Correction');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('UNRESOLVED_VALIDATION_ISSUES');
+      expect(result.httpStatus).toBe(422);
+    }
+  });
+
+  it('reports ALREADY_IN_STATE only once every other guardrail has passed', () => {
+    const result = attempt('R001', 'MARK_REVIEWED', '   ', 'Reviewed');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('ALREADY_IN_STATE');
+      expect(result.httpStatus).toBe(409);
+    }
+  });
+});
+
 describe('planReviewTransition — guardrails', () => {
   it('rejects Reviewed on a record with unresolved issues', () => {
     const result = attempt('R003', 'MARK_REVIEWED');

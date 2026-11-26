@@ -129,6 +129,8 @@ probe "dataset: copy of R001"         "Needs Attention[DUPLICATE_TRANSACTION]" \
   "$(payload dataset clientId=C01 sourceId=X-101 supplier='Westline Office' subtotal=100.00 vat=20.00 total=120.00)"
 probe "dataset: same ID, other client" "200 | dataset | Valid" \
   "$(payload dataset clientId=C03 sourceId=X-101 supplier='Westline Office' subtotal=100.00 vat=20.00 total=120.00)"
+probe "dataset: padded ids duplicate"  "Needs Attention[DUPLICATE_TRANSACTION]" \
+  "$(payload dataset clientId=' C01 ' sourceId='X-101 ' supplier='Westline Office' subtotal=100.00 vat=20.00 total=120.00)"
 
 echo
 echo "--- request errors (a bad request is an error, a bad record is data) ---"

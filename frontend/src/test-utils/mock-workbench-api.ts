@@ -49,6 +49,8 @@ export interface MockWorkbenchApi {
   reviewBodies: Array<Record<string, unknown>>;
   records: () => EvaluatedTransaction[];
   failNextList: () => void;
+  /** Makes the next review request fail with a server guardrail error (422). */
+  failNextReview: () => void;
   restore: () => void;
 }
 
@@ -63,6 +65,7 @@ export function installMockApi(): MockWorkbenchApi {
   const reviewBodies: Array<Record<string, unknown>> = [];
   let auditSequence = 0;
   let failListOnce = false;
+  let failReviewOnce = false;
 
   const jsonResponse = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), {
@@ -96,6 +99,15 @@ export function installMockApi(): MockWorkbenchApi {
 
       if (!record) {
         return errorResponse(404, 'RECORD_NOT_FOUND', `No transaction with id ${recordId}.`);
+      }
+
+      if (failReviewOnce) {
+        failReviewOnce = false;
+        return errorResponse(
+          422,
+          'UNRESOLVED_VALIDATION_ISSUES',
+          `${record.id} has 1 unresolved validation issue (TOTAL_MISMATCH) and cannot be marked as Reviewed.`,
+        );
       }
 
       if (action === 'MARK_NEEDS_CORRECTION' && note.length < 3) {
@@ -211,6 +223,9 @@ export function installMockApi(): MockWorkbenchApi {
     records: () => clone(records),
     failNextList: () => {
       failListOnce = true;
+    },
+    failNextReview: () => {
+      failReviewOnce = true;
     },
     restore: () => {
       vi.unstubAllGlobals();

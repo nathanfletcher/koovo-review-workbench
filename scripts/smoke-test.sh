@@ -113,6 +113,7 @@ check "$API/transactions?clientId=C02" 'd.records.length === 1 && d.records[0].i
 check "$API/transactions?validationStatus=Needs%20Attention" 'd.records.map(r => r.id).join(",") === "R003,R004,R005,R011"' "validation status filter"
 check "$API/transactions?clientId=ZZZ" 'd.records.length === 0 && d.summary.total === 11' "empty filter result is not an error"
 expect_status GET "$API/transactions?validationStatus=Bogus" '' 400 "unknown filter rejected"
+expect_status GET "$API/transactions?clientId=" '' 400 "blank filter rejected"
 expect_status GET "$API/transactions/R999" '' 404 "unknown record rejected"
 
 echo

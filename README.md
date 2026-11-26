@@ -6,7 +6,7 @@ an audit trail.
 
 - **Backend:** TypeScript + NestJS (`/backend`), in-memory repository, no database required
 - **Frontend:** React + TypeScript + Vite (`/frontend`)
-- **Tests:** 162 automated checks — Jest unit (86), Supertest integration (51), Vitest/RTL UI (25), plus 22 live smoke assertions and 20 HTTP rule probes
+- **Tests:** 195 automated checks — Jest unit (105), Supertest integration (64), Vitest/RTL UI (26), plus 23 live smoke assertions and 21 HTTP rule probes
 - **No paid services, no cloud, no Docker, no network access at test time**
 
 ---
@@ -37,7 +37,7 @@ browser only ever talks to one origin.
 | `npm run build` | `nest build` + `tsc --noEmit && vite build` |
 | `npm run verify` | typecheck + lint + all tests + build (the one command that gates delivery) |
 | `npm run smoke` | Boots the **real built** API and UI, asserts over real HTTP, then shuts both down |
-| `npm run probe` | Sends 20 rule probes to a running API (`POST /api/validate`) and checks each verdict |
+| `npm run probe` | Sends 21 rule probes to a running API (`POST /api/validate`) and checks each verdict |
 
 Individual projects:
 
@@ -73,7 +73,7 @@ PORT=4000 node backend/dist/main.js  # run the built API on another port
 ```
 
 **Why the domain is framework-free.** Every rule is a pure function over typed records, so the
-validation logic is exhaustively unit-tested (86 tests) without booting Nest, and can be dropped into a
+validation logic is exhaustively unit-tested (105 tests) without booting Nest, and can be dropped into a
 worker, a batch job, or a different transport unchanged. Nest is only an adapter that maps decisions to
 HTTP statuses.
 
@@ -84,7 +84,7 @@ HTTP statuses.
 | Rule | Implementation |
 |---|---|
 | Draft / Void → **Excluded** (counted in summary, no review actions) | Exclusion gate runs first; these records never reach posted rules or the dedupe index |
-| Identity = `Client + Source + Source ID`; identical repeats not processed twice | `transactionKey = client::source::sourceId`; first occurrence owns the key, later ones get `DUPLICATE_TRANSACTION`, stay visible, and are excluded from reporting |
+| Identity = `Client + Source + Source ID`; identical repeats not processed twice | `transactionKey = client::source::sourceId`. Both ids are trimmed first, so `" C01 "` cannot masquerade as a second identity. The first occurrence owns the key; later ones get `DUPLICATE_TRANSACTION`, stay visible, and are excluded from reporting |
 | Different clients may share a Source ID | `C01::Xero::X-101` ≠ `C02::Xero::X-101` |
 | Posted **Bills** must be non-negative | `NEGATIVE_BILL_AMOUNT` listing Subtotal/VAT/Total |
 | Posted **Credits** may be negative | Sign rules only apply to Bills; a Credit failing the math check is still flagged |
@@ -104,12 +104,18 @@ Expected result on load (asserted in unit, integration, UI and smoke tests):
 | Current | Action | Result |
 |---|---|---|
 | any | — | `Unreviewed` initially, even when `Valid` |
-| `Valid` | Mark Reviewed | `Reviewed` |
+| `Valid` | Mark Reviewed (note optional) | `Reviewed`; a supplied note is trimmed and kept on the audit entry (`null` when blank) |
 | `Valid` / `Needs Attention` | Mark Needs Correction + note | `Needs Correction` |
 | `Needs Correction` (Valid record) | Mark Reviewed | `Reviewed` (correction verified) |
 | `Needs Attention` | Mark Reviewed | **422** `UNRESOLVED_VALIDATION_ISSUES` |
 | `Excluded` | any action | **422** `EXCLUDED_RECORD` |
 | any | same target twice | **409** `ALREADY_IN_STATE` |
+
+`MARK_NEEDS_CORRECTION` requires a note of 3–500 characters: the minimum is a domain guardrail
+(`NOTE_REQUIRED`, `400`), the maximum a request-schema limit (`INVALID_REQUEST`, `400`) that stops an
+oversized payload before any business rule runs. Guardrails run in a fixed order, and the first failure
+wins: `NOTE_REQUIRED` (400) → `EXCLUDED_RECORD` (422) → `UNRESOLVED_VALIDATION_ISSUES` (422) →
+`ALREADY_IN_STATE` (409). The order is asserted in `review-state.spec.ts` and again over HTTP.
 
 ---
 
@@ -124,14 +130,22 @@ Base URL `http://localhost:3001/api`. Every non-2xx response has one shape:
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | `{ status, timestamp }` |
-| `GET` | `/transactions?clientId=&validationStatus=&reviewStatus=` | `{ summary, clients, records }`. `summary`/`clients` always describe the **full** dataset; `records` is filtered. Unknown params/enums → `400` |
+| `GET` | `/transactions?clientId=&validationStatus=&reviewStatus=` | `{ summary, clients, records }`. `summary`/`clients` always describe the **full** dataset; `records` is filtered. Unknown params/enums **and blank values** (`?clientId=`) → `400` |
 | `GET` | `/transactions/:id` | One record with `issues` + `auditHistory`; `404` if unknown |
-| `POST` | `/transactions/:id/review` | `{ action, note?, reviewerId, reviewerName? }` → `200 { record, auditEntry, summary }` |
+| `POST` | `/transactions/:id/review` | `{ action, note?, reviewerId, reviewerName? }` → `200 { record, auditEntry, summary }`. `note` is optional for `MARK_REVIEWED` and required (3–500 chars) for `MARK_NEEDS_CORRECTION` |
 | `POST` | `/validate` | **Dry run** — `{ records: [...], context?: "isolated" \| "dataset" }` → validation results, **nothing persisted** |
 | `GET` | `/audit-logs` | `{ entries }`, newest first |
 
 Error codes: `INVALID_REQUEST` (400), `NOTE_REQUIRED` (400), `RECORD_NOT_FOUND` (404),
-`ALREADY_IN_STATE` (409), `EXCLUDED_RECORD` (422), `UNRESOLVED_VALIDATION_ISSUES` (422).
+`ALREADY_IN_STATE` (409), `CONCURRENT_REVIEW_CONFLICT` (409), `EXCLUDED_RECORD` (422),
+`UNRESOLVED_VALIDATION_ISSUES` (422).
+
+`CONCURRENT_REVIEW_CONFLICT` is the optimistic-concurrency answer: the repository refuses a review write
+whose `previousReviewStatus` no longer matches the stored record, so two reviewers can never overwrite
+each other or append an audit entry for a transition that no longer applies. With one in-memory process
+the race cannot occur (the guard is a defensive invariant, unit-tested directly); the PostgreSQL
+implementation enforces it with a conditional `UPDATE ... WHERE review_status = $previous` in the same
+transaction as the audit insert, documented in `WorkbenchRepository.applyReview`.
 
 ### Probing the rules yourself (dry run)
 
@@ -153,7 +167,7 @@ curl -s -X POST localhost:3001/api/validate -H 'Content-Type: application/json' 
 
 ```bash
 npm run dev:backend   # terminal 1
-npm run probe         # terminal 2 — 20 probes covering every rule, exits non-zero on a regression
+npm run probe         # terminal 2 — 21 probes covering every rule, exits non-zero on a regression
 ```
 
 Contract details:
@@ -174,6 +188,7 @@ Where each rule is proven:
 |---|---|---|
 | Exclusion (Draft/Void) | `validation-engine.spec.ts` → "excludes Draft and Void" | probe `draft, broken maths`, `void record` |
 | Composite identity, identical duplicate | `validation-engine.spec.ts` → R005 | probe `dataset: copy of R001` |
+| Whitespace in identifiers | `validation-engine.spec.ts` → "identity normalisation" | probe `dataset: padded ids duplicate` |
 | Cross-client same Source ID | `validation-engine.spec.ts` → R007 | probe `dataset: same ID, other client` |
 | Conflicting duplicate | `validation-engine.spec.ts` → "conflicting duplicate" | `POST /validate` with a changed total |
 | Bill sign rule | `validation-engine.spec.ts` → R011 | probe `negative bill` |
@@ -181,7 +196,7 @@ Where each rule is proven:
 | `Total = Subtotal + VAT` in pence | `money.spec.ts` + `validation-engine.spec.ts` → R003 | probes `total mismatch`, `one-penny drift` |
 | Missing supplier | `validation-engine.spec.ts` → R004 | probes `supplier '-'`, `supplier null` |
 | Unparseable/missing amount | `money.spec.ts` (grammar table) | probe `unparseable amount` |
-| Review guardrails (422/409) | `review-state.spec.ts` | `tests/integration/transactions.e2e-spec.ts` + `scripts/smoke-test.sh` |
+| Review guardrails (422/409) | `review-state.spec.ts` + `workbench-repository.spec.ts` | `tests/integration/transactions.e2e-spec.ts` + `scripts/smoke-test.sh` |
 
 ---
 
@@ -190,14 +205,15 @@ Where each rule is proven:
 | Layer | File | Count | Covers |
 |---|---|---|---|
 | Unit (money) | `backend/test/unit/money.spec.ts` | 36 | Accepted/rejected amount grammar, negatives, missing values, safe-range overflow, formatting, float-drift cases |
-| Unit (rules) | `backend/test/unit/validation-engine.spec.ts` | 35 | All 11 records row-by-row, exact issue codes, cross-client vs duplicate, conflicting duplicates, excluded records and the dedupe index, multi-issue ordering, purity/idempotence, penny boundaries |
-| Unit (state) | `backend/test/unit/review-state.spec.ts` | 15 | Every allowed transition and every rejection branch, note bounds, precedence |
-| Integration (review workflow) | `backend/test/integration/transactions.e2e-spec.ts` | 28 | Real Nest app + pipes + filter + fixed clock: list shape/order/summary, each filter, summary invariance, 400/404/409/422 contracts, audit append-only, repository reset |
-| Integration (dry run) | `backend/test/integration/validate.e2e-spec.ts` | 23 | Every rule through `POST /validate`, both dedupe contexts, id defaulting, numeric coercion, payload limits, request-vs-record errors, proof that nothing persists |
-| UI | `frontend/src/__tests__/workbench.test.tsx` | 10 | Summary + 11 rows, client & status filters (asserting the API was called), drawer explanations, disabled guardrails, review flows with audit entries, loading/error/retry/empty states, Escape |
+| Unit (rules) | `backend/test/unit/validation-engine.spec.ts` | 41 | All 11 records row-by-row, exact issue codes, cross-client vs duplicate, conflicting duplicates, identifier trimming, money-equal duplicates, excluded records and the dedupe index, multi-issue ordering, purity/idempotence, penny boundaries |
+| Unit (state) | `backend/test/unit/review-state.spec.ts` | 22 | Every allowed transition and every rejection branch, note semantics, guardrail precedence, note bounds |
+| Unit (repository) | `backend/test/unit/workbench-repository.spec.ts` | 6 | Append-only audit, newest-first log, copy isolation, optimistic (`previousReviewStatus`) rejection with no audit row, reset |
+| Integration (review workflow) | `backend/test/integration/transactions.e2e-spec.ts` | 37 | Real Nest app + pipes + filter + fixed clock: list shape/order/summary, each filter, summary + clients invariance, blank-filter rejection, 400/404/409/422 contracts, note/reviewer normalisation, stale-write 409, audit append-only, repository reset |
+| Integration (dry run) | `backend/test/integration/validate.e2e-spec.ts` | 27 | Every rule through `POST /validate`, both dedupe contexts, identifier trimming, raw amount retention, id defaulting, numeric coercion, payload limits, request-vs-record errors, proof that nothing persists |
+| UI | `frontend/src/__tests__/workbench.test.tsx` | 11 | Summary + 11 rows, client & status filters (asserting the API was called), drawer explanations, disabled guardrails, review flows with audit entries, server-error surfacing, loading/error/retry/empty states, Escape |
 | UI utils | `frontend/src/__tests__/format.test.ts` | 15 | GBP display formatting, timestamps |
-| End-to-end | `scripts/smoke-test.sh` | 22 assertions | Real built API + real Vite preview over real HTTP, then clean shutdown |
-| Rule probes | `scripts/probe.sh` | 20 assertions | Every rule over HTTP against a running API, including "nothing was persisted" |
+| End-to-end | `scripts/smoke-test.sh` | 23 assertions | Real built API + real Vite preview over real HTTP, then clean shutdown |
+| Rule probes | `scripts/probe.sh` | 21 assertions | Every rule over HTTP against a running API, including whitespace-variant duplicates and "nothing was persisted" |
 
 The UI test fixture is **generated from the real engine** (`scripts/generate-fixture.js`) so mocked
 tests cannot drift from the server's behaviour.
@@ -236,15 +252,33 @@ tests cannot drift from the server's behaviour.
     audit IDs (`AUD-0001`) instead of "something happened".
 11. **No UI framework.** Plain CSS keeps the bundle at ~74 kB gzipped and keeps every element reviewable.
     The brief explicitly says visual polish is not assessed.
-12. **Known limitations (deliberate).** No authentication/authorisation — the client asserts a mock
+12. **Identity is normalised before it is compared.** `clientId` and `sourceId` are trimmed once, at
+    evaluation time, so `" C01 "` and `"C01"` are one identity. Duplicate values are compared as pence
+    (`"100.0"` ≡ `"100.00"`), so formatting alone never fabricates a "conflicting" duplicate — while the
+    original raw amount strings are still returned verbatim for the UI and for export.
+13. **Known limitations (deliberate).** No authentication/authorisation — the client asserts a mock
     reviewer (`acct-nathan`), and the server trusts `reviewerId` (documented, not hidden). No persistence
-    across restarts. No pagination (11 records). No concurrency/optimistic-locking on review actions.
+    across restarts. No pagination (11 records). Review writes carry the optimistic
+    `previousReviewStatus` token and are rejected when stale (`409 CONCURRENT_REVIEW_CONFLICT`), but a
+    single in-process store cannot exercise that race; PostgreSQL is where it becomes load-bearing.
 
 ### What changes for production
 
+- **Currency (deliberate scope):** the brief specifies GBP with 2 decimal places, so every amount is
+  parsed to integer pence and never touched by floating point — that is what makes
+  `100.10 + 20.20` compare equal to `120.30` and what prevents drift from becoming a false
+  `TOTAL_MISMATCH`. A multi-currency production system would need an ISO-4217 code on every record, a
+  per-currency minor-unit exponent (JPY has 0 decimals, KWD has 3) instead of a hard-coded ×100, a
+  decimal type such as `NUMERIC(19,4)` or `dinero.js`/`decimal.js` for arithmetic across currencies, and
+  an FX rate snapshot (rate + source + effective timestamp) stored alongside each converted amount —
+  because a rate that changes tomorrow must not restate yesterday's ledger. None of that is in scope
+  here, and pretending otherwise would be worse than the explicit GBP constraint.
 - **Persistence:** `transactions` table (composite unique index on `client_id, source, source_id` for
   dedupe at ingestion) + `review_audit` append-only table with `ON DELETE RESTRICT`; both written in one
-  transaction so a state change can never exist without its audit entry.
+  transaction so a state change can never exist without its audit entry. The review update is
+  `UPDATE ... WHERE id = $1 AND review_status = $2` (plus a `version` column for `If-Match`), and a
+  zero-row result becomes `409 CONCURRENT_REVIEW_CONFLICT` — the in-memory repository already enforces
+  the same `previousReviewStatus` contract.
 - **Ingestion:** Xero/Sage webhooks → idempotency keys (`client:source:sourceId:update-id`), raw payload
   archive, validation on ingest plus a nightly re-validation sweep (rules change; historical rows must be
   re-scored).
@@ -276,7 +310,7 @@ tests cannot drift from the server's behaviour.
 
 ```bash
 npm install && npm run setup   # once
-npm run verify                 # typecheck + lint + 162 tests + builds
+npm run verify                 # typecheck + lint + 195 tests + builds
 npm run dev                    # http://localhost:5173
 ```
 
@@ -297,7 +331,7 @@ npm run dev                    # http://localhost:5173
    -H 'Content-Type: application/json' -d '{"action":"MARK_REVIEWED","reviewerId":"acct-nathan"}'
    → 422`.
 9. `npm run smoke` — the same guarantees re-asserted against real processes, then clean shutdown.
-10. **`npm run probe`** (API already running) — 20 rule probes over HTTP for anyone who wants to test
+10. **`npm run probe`** (API already running) — 21 rule probes over HTTP for anyone who wants to test
     their own numbers: send `subtotal 300.00 / vat 60.00 / total 365.00` and `TOTAL_MISMATCH` comes
     back; send a Draft record and it is excluded; post a copy of R001 with `"context":"dataset"` and it
     is flagged as a duplicate of R001 — and the dataset summary is unchanged afterwards.

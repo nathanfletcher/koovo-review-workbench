@@ -8,7 +8,7 @@ import type {
   ReviewActionResponse,
   TransactionListResponse,
 } from '../../src/domain/models';
-import { WorkbenchRepository } from '../../src/repositories/workbench.repository';
+import { WorkbenchRepository, StaleReviewWriteError } from '../../src/repositories/workbench.repository';
 import { FIXED_NOW, createTestApp } from '../utils/create-test-app';
 
 const REVIEWER = { reviewerId: 'acct-nathan', reviewerName: 'Nathan Fletcher' };
@@ -32,6 +32,10 @@ describe('Koovo review API (integration)', () => {
   beforeEach(() => {
     // Every test starts from the pristine seed dataset.
     repository.reset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   const list = async (query = ''): Promise<TransactionListResponse> => {
@@ -137,6 +141,45 @@ describe('Koovo review API (integration)', () => {
 
       expect(idsOf(await list('?reviewStatus=Reviewed'))).toEqual(['R001']);
       expect(idsOf(await list('?reviewStatus=Unreviewed'))).toHaveLength(10);
+    });
+
+    it('keeps summary and clients global for every filter', async () => {
+      const global = await list();
+
+      for (const query of [
+        '?clientId=C01',
+        '?clientId=C02',
+        '?validationStatus=Valid',
+        '?validationStatus=Needs%20Attention',
+        '?validationStatus=Excluded',
+        '?reviewStatus=Unreviewed',
+        '?clientId=C01&validationStatus=Excluded',
+        '?clientId=ZZZ',
+      ]) {
+        const filtered = await list(query);
+
+        expect(filtered.summary).toEqual(global.summary);
+        expect(filtered.clients).toEqual(global.clients);
+      }
+    });
+
+    it('rejects blank filter values instead of filtering on an empty string', async () => {
+      for (const query of [
+        '?clientId=',
+        '?clientId=%20%20',
+        '?validationStatus=',
+        '?reviewStatus=',
+      ]) {
+        const response = await request(server).get(`/api/transactions${query}`).expect(400);
+
+        expect((response.body as ApiErrorBody).code).toBe('INVALID_REQUEST');
+      }
+
+      const blankClient = await request(server)
+        .get('/api/transactions?clientId=%20%20')
+        .expect(400);
+
+      expect((blankClient.body as ApiErrorBody).message).toContain('clientId');
     });
 
     it('returns an empty list (not an error) for a client with no records', async () => {
@@ -277,6 +320,60 @@ describe('Koovo review API (integration)', () => {
         note: 'Corrected by the client',
       });
     });
+
+    it('retains a trimmed note supplied when marking a Valid record Reviewed', async () => {
+      const response = await request(server)
+        .post('/api/transactions/R001/review')
+        .send({
+          action: 'MARK_REVIEWED',
+          note: '  Checked against the supplier invoice  ',
+          ...REVIEWER,
+        })
+        .expect(200);
+
+      expect((response.body as ReviewActionResponse).auditEntry.note).toBe(
+        'Checked against the supplier invoice',
+      );
+    });
+
+    it('stores a blank note as null', async () => {
+      const response = await request(server)
+        .post('/api/transactions/R001/review')
+        .send({ action: 'MARK_REVIEWED', note: '   ', ...REVIEWER })
+        .expect(200);
+
+      expect((response.body as ReviewActionResponse).auditEntry.note).toBeNull();
+    });
+
+    it('trims the reviewer identity and falls back to reviewerId for a blank name', async () => {
+      const response = await request(server)
+        .post('/api/transactions/R001/review')
+        .send({ action: 'MARK_REVIEWED', reviewerId: '  acct-nathan  ', reviewerName: '   ' })
+        .expect(200);
+
+      expect((response.body as ReviewActionResponse).auditEntry).toMatchObject({
+        reviewerId: 'acct-nathan',
+        reviewerName: 'acct-nathan',
+      });
+    });
+
+    it('rejects repeating Needs Correction with 409 and keeps one audit entry', async () => {
+      await request(server)
+        .post('/api/transactions/R003/review')
+        .send({ action: 'MARK_NEEDS_CORRECTION', note: 'Total does not match', ...REVIEWER })
+        .expect(200);
+
+      const again = await request(server)
+        .post('/api/transactions/R003/review')
+        .send({ action: 'MARK_NEEDS_CORRECTION', note: 'Still does not match', ...REVIEWER })
+        .expect(409);
+
+      expect((again.body as ApiErrorBody).code).toBe('ALREADY_IN_STATE');
+
+      const record = await request(server).get('/api/transactions/R003').expect(200);
+      expect((record.body as EvaluatedTransaction).reviewStatus).toBe('Needs Correction');
+      expect((record.body as EvaluatedTransaction).auditHistory).toHaveLength(1);
+    });
   });
 
   describe('POST /api/transactions/:id/review — guardrails', () => {
@@ -343,6 +440,50 @@ describe('Koovo review API (integration)', () => {
 
       const record = await request(server).get('/api/transactions/R001').expect(200);
       expect((record.body as EvaluatedTransaction).auditHistory).toHaveLength(1);
+    });
+
+    it('reports the first failing guardrail over HTTP (422 before 409)', async () => {
+      await request(server)
+        .post('/api/transactions/R003/review')
+        .send({ action: 'MARK_NEEDS_CORRECTION', note: 'Total does not match', ...REVIEWER })
+        .expect(200);
+
+      const response = await request(server)
+        .post('/api/transactions/R003/review')
+        .send({ action: 'MARK_REVIEWED', ...REVIEWER })
+        .expect(422);
+
+      expect((response.body as ApiErrorBody).code).toBe('UNRESOLVED_VALIDATION_ISSUES');
+    });
+
+    it('rejects a blank reviewer identity with 400', async () => {
+      const response = await request(server)
+        .post('/api/transactions/R001/review')
+        .send({ action: 'MARK_REVIEWED', reviewerId: '   ' })
+        .expect(400);
+
+      expect((response.body as ApiErrorBody).code).toBe('INVALID_REQUEST');
+      expect((response.body as ApiErrorBody).message).toContain('reviewerId');
+    });
+
+    it('maps a write planned against a stale snapshot to 409 CONCURRENT_REVIEW_CONFLICT', async () => {
+      // The in-memory store cannot interleave calls, so the race is injected:
+      // the repository refuses a mutation whose previousReviewStatus is stale.
+      jest.spyOn(repository, 'applyReview').mockImplementationOnce(() => {
+        throw new StaleReviewWriteError('R001', 'Unreviewed', 'Reviewed');
+      });
+
+      const response = await request(server)
+        .post('/api/transactions/R001/review')
+        .send({ action: 'MARK_REVIEWED', ...REVIEWER })
+        .expect(409);
+
+      expect((response.body as ApiErrorBody).code).toBe('CONCURRENT_REVIEW_CONFLICT');
+      expect((response.body as ApiErrorBody).message).toContain('Reload the record and retry');
+
+      const record = await request(server).get('/api/transactions/R001').expect(200);
+      expect((record.body as EvaluatedTransaction).reviewStatus).toBe('Unreviewed');
+      expect((record.body as EvaluatedTransaction).auditHistory).toEqual([]);
     });
 
     it('returns 404 before applying any guardrail for an unknown record', async () => {

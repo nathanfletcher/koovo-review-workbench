@@ -31,8 +31,20 @@ function targetStatusFor(action: ReviewAction): ReviewStatus {
 }
 
 /**
- * Declarative guardrails. Order matches PLAN.md §4.5 (first failure wins):
- * request completeness (400) -> excluded (422) -> unresolved issues (422) -> no-op (409).
+ * Declarative guardrails, first failure wins (PLAN.md §4.5). The order is part
+ * of the contract, not an accident:
+ *
+ *   1. NOTE_REQUIRED (400)                — MARK_NEEDS_CORRECTION without a 3+ char note
+ *   2. EXCLUDED_RECORD (422)              — Draft/Void records cannot be reviewed at all
+ *   3. UNRESOLVED_VALIDATION_ISSUES (422) — MARK_REVIEWED on anything that is not Valid
+ *   4. ALREADY_IN_STATE (409)             — the record is already at the target status
+ *
+ * Notes: MARK_REVIEWED accepts an optional note and keeps it (trimmed) on the
+ * audit entry; an absent/blank note is stored as `null`. MARK_NEEDS_CORRECTION
+ * requires a note of at least `MIN_NOTE_LENGTH` characters — the
+ * `MAX_NOTE_LENGTH` upper bound is a request-schema limit enforced by
+ * `ReviewActionDto` (400 INVALID_REQUEST) and mirrored in the UI, so that an
+ * oversized payload is rejected before any business rule runs.
  */
 export function planReviewTransition(
   record: EvaluatedTransaction,

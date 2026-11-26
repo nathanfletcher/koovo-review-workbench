@@ -361,3 +361,48 @@ semantics.
 | `npm run probe` (live API) | **20/20** probes, dataset unchanged |
 | `npm run verify` | typecheck + lint + **162** tests + both builds, exit 0 |
 | `npm run smoke` | 22/22 assertions |
+
+---
+
+## 10. v1.2.0 — targeted hardening pass (post-v1.1.0)
+
+A second review of `main` against the brief looked specifically for naive edge cases rather than missing
+features. Nine findings, all fixed with a test each; no new runtime dependency.
+
+### 10.1 Domain and validation engine
+
+| # | Finding | Fix |
+|---|---|---|
+| H1 | `transactionKey` used `clientId`/`sourceId` verbatim, so `" C01 "` and `"C01"` were two identities — a real duplicate could slip through, and the record echoed untrimmed ids | `normalizeIdentifier()` trims both ids once in `evaluateOne`; key, stored record and duplicate message all use the cleaned value. Idempotent, applied on every evaluation path |
+| H2 | Duplicate values were compared as raw strings, so `"100.0"` vs `"100.00"` was reported as a **conflicting** duplicate | `sameAmount()` compares parsed pence when both sides parse (trimmed strings otherwise); `duplicateKind` now means "the money differs", not "the text differs". Raw amount strings are still returned untouched |
+| H3 | Exclusion and guardrail ordering were correct but only implied by separate tests | Precedence is now asserted directly: `NOTE_REQUIRED` beats `EXCLUDED_RECORD`; `EXCLUDED_RECORD` beats `UNRESOLVED_VALIDATION_ISSUES` (synthetic excluded-with-issues record); `UNRESOLVED_VALIDATION_ISSUES` beats `ALREADY_IN_STATE` |
+| H4 | The note contract was ambiguous for `MARK_REVIEWED` | Decided and documented: an optional note is retained (trimmed) on `Reviewed` and stored as `null` when blank/absent; `MARK_NEEDS_CORRECTION` requires 3+ characters, and the 500-character maximum is a request-schema bound (`MAX_NOTE_LENGTH`, now shared by the DTO instead of duplicating `500`) |
+| H5 | `reviewerId` accepted `""`/whitespace (PLAN §4.5 says 1–64 chars) and a blank `reviewerName` produced a blank audit entry | `reviewerId` is trimmed + `IsNotEmpty` (`400 INVALID_REQUEST`); a blank `reviewerName` falls back to `reviewerId` |
+
+### 10.2 Service, DTOs and repository
+
+| # | Finding | Fix |
+|---|---|---|
+| H6 | `?clientId=` (blank) filtered on the empty string and returned an empty list instead of rejecting the request; `summary`/`clients` invariance was only tested for one filter | `clientId` is trimmed + `IsNotEmpty` in `TransactionQueryDto` (blank enums already failed `IsIn`). Integration tests cover all three params and assert summary + client list invariance across every filter combination |
+| H7 | Review writes had no optimistic-concurrency story, and `applyReview` trusted its caller's snapshot | `applyReview` now refuses a mutation whose `previousReviewStatus` no longer matches (`StaleReviewWriteError`), mapped by the service to `409 CONCURRENT_REVIEW_CONFLICT`. The PostgreSQL shape — conditional `UPDATE ... WHERE id = $1 AND review_status = $2` with the audit insert in the same transaction, zero rows → 409 — is documented at the write site and in the README production section |
+| H8 | Nothing proved that the dry-run round trip preserves original amount formatting | New integration tests assert `POST /validate` echoes `"100.5"`, `" 20.50 "`, `"121.0"` verbatim while validating on pence, and that padded identifiers are echoed trimmed |
+| H9 | Repeated `Needs Correction` had unit coverage but no HTTP proof that it does not append a second audit entry | Integration test: `Needs Correction` → `Needs Correction` is `409 ALREADY_IN_STATE` and `auditHistory` stays at one entry |
+
+### 10.3 UI
+
+No behaviour changed. One new test proves that a **server** guardrail error (`422`) surfaces in the
+drawer as an alert, leaves the record and summary untouched, and keeps the action retryable — the
+previously untested error path required by Phase 2.4.
+
+### 10.4 Gate
+
+| Command | Result |
+|---|---|
+| `npm run verify` | typecheck + lint + **195** tests (105 unit, 64 integration, 26 UI) + both builds, exit 0 |
+| `npm run smoke` | **23/23** assertions (real built API + real Vite preview), both processes shut down |
+| `npm run probe` (live API) | **21/21** probes, dataset unchanged |
+
+Test growth: unit 86 → 105, integration 51 → 64, UI 25 → 26 (162 → 195). The extra unit suite
+(`workbench-repository.spec.ts`) exists because H7's invariant is a repository contract, not an HTTP one:
+it can only be exercised by a direct stale write, so testing it through the controller would require
+faking a race.

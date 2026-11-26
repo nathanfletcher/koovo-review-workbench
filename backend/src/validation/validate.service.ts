@@ -6,6 +6,11 @@ import type { ValidateRequestDto, ValidationContext } from './dto/validate-reque
 
 const DEFAULT_CONTEXT: ValidationContext = 'isolated';
 
+/**
+ * Copies the raw fields verbatim — including the original `subtotal`/`vat`/`total`
+ * strings. A dataset-context dry run must re-evaluate exactly what the source
+ * system sent, so no formatting is normalised on the way back in.
+ */
 function toRawRecord(record: EvaluatedTransaction): RawAccountingRecord {
   return {
     id: record.id,

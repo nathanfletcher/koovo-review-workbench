@@ -243,6 +243,67 @@ describe('POST /api/validate (dry run)', () => {
     });
   });
 
+  describe('raw values and identity normalisation', () => {
+    it('echoes the original amount strings exactly, formatting included', async () => {
+      const body = await single({ subtotal: '100.5', vat: ' 20.50 ', total: '121.0' });
+
+      expect(body.records[0]).toMatchObject({
+        subtotal: '100.5',
+        vat: ' 20.50 ',
+        total: '121.0',
+        validationStatus: 'Valid',
+      });
+    });
+
+    it('trims identifiers before building the composite key', async () => {
+      const body = await single({ clientId: '  C99  ', sourceId: ' X-900 ' });
+
+      expect(body.records[0]).toMatchObject({
+        clientId: 'C99',
+        sourceId: 'X-900',
+        transactionKey: 'C99::Xero::X-900',
+        validationStatus: 'Valid',
+      });
+    });
+
+    it('detects duplicates across whitespace variants of one identity', async () => {
+      const { body } = await run({
+        records: [
+          record({ id: 'A', clientId: 'C09', sourceId: 'X-909' }),
+          record({ id: 'B', clientId: ' C09 ', sourceId: 'X-909 ' }),
+        ],
+      });
+
+      const validated = body as ValidateResponse;
+      expect(validated.records[0]?.isDuplicate).toBe(false);
+      expect(validated.records[0]?.validationStatus).toBe('Valid');
+      expect(validated.records[1]).toMatchObject({
+        clientId: 'C09',
+        isDuplicate: true,
+        duplicateOfRecordId: 'A',
+        duplicateKind: 'identical',
+        validationStatus: 'Needs Attention',
+      });
+    });
+
+    it('keeps raw amounts intact when a dataset-context duplicate is reported', async () => {
+      const { body } = await run({
+        context: 'dataset',
+        records: [record({ clientId: ' C01 ', sourceId: 'X-101', supplier: 'Westline Office' })],
+      });
+
+      expect((body as ValidateResponse).records[0]).toMatchObject({
+        clientId: 'C01',
+        sourceId: 'X-101',
+        subtotal: '10.00',
+        vat: '2.00',
+        total: '12.00',
+        isDuplicate: true,
+        duplicateOfRecordId: 'R001',
+      });
+    });
+  });
+
   describe('nothing is persisted', () => {
     it('leaves the dataset, summary and audit log untouched', async () => {
       await run({ records: [record({ clientId: 'C01', sourceId: 'X-999' })] });

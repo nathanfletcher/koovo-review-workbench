@@ -18,10 +18,20 @@ const AMOUNT_LABELS = {
   total: 'Total',
 } as const;
 
+/**
+ * Identity fields arrive from two accounting systems and are often hand-keyed,
+ * so they are trimmed before any comparison. `" C01 "` and `"C01"` are the same
+ * client; letting the raw value through would split one transaction into two
+ * identities (or hide a genuine duplicate).
+ */
+export function normalizeIdentifier(raw: string): string {
+  return raw.trim();
+}
+
 export function buildTransactionKey(
   record: Pick<RawAccountingRecord, 'clientId' | 'source' | 'sourceId'>,
 ): string {
-  return `${record.clientId}::${record.source}::${record.sourceId}`;
+  return `${normalizeIdentifier(record.clientId)}::${record.source}::${normalizeIdentifier(record.sourceId)}`;
 }
 
 /** `null`, `undefined`, `""`, whitespace and the source data's `"-"` placeholder all mean "missing". */
@@ -49,14 +59,26 @@ function describeAmountFailure(label: string, rawValue: string, reason: string):
   }
 }
 
+/** Amounts are compared as pence when both sides parse, so `"100.0"` and `"100.00"` are the same money. */
+function sameAmount(a: string, b: string): boolean {
+  const left = parseAmountToPence(a);
+  const right = parseAmountToPence(b);
+
+  if (left.ok && right.ok) {
+    return left.pence === right.pence;
+  }
+
+  return a.trim() === b.trim();
+}
+
 function sameValues(a: RawAccountingRecord, b: RawAccountingRecord): boolean {
   return (
     a.type === b.type &&
     a.sourceStatus === b.sourceStatus &&
     normalizeSupplier(a.supplier) === normalizeSupplier(b.supplier) &&
-    a.subtotal === b.subtotal &&
-    a.vat === b.vat &&
-    a.total === b.total
+    sameAmount(a.subtotal, b.subtotal) &&
+    sameAmount(a.vat, b.vat) &&
+    sameAmount(a.total, b.total)
   );
 }
 
@@ -75,9 +97,16 @@ function duplicateIssue(
 }
 
 function evaluateOne(
-  record: RawAccountingRecord,
+  raw: RawAccountingRecord,
   seen: Map<string, RawAccountingRecord>,
 ): EvaluatedTransaction {
+  // Identity fields are normalised once, before they are compared or echoed:
+  // the evaluated record always carries the cleaned client/source ids.
+  const record: RawAccountingRecord = {
+    ...raw,
+    clientId: normalizeIdentifier(raw.clientId),
+    sourceId: normalizeIdentifier(raw.sourceId),
+  };
   const transactionKey = buildTransactionKey(record);
   const supplier = normalizeSupplier(record.supplier);
   const excluded = EXCLUDED_SOURCE_STATUSES.has(record.sourceStatus);
